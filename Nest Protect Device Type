@@ -1,8 +1,9 @@
 /**
  *  Nest Protect
  *
- *  Author: nick@nickhbailey.com
- *  Date: 01.03.14
+ *  Author: josh@joshtb.com
+ *  Date: 09.18.15
+ *  Add power status detection and cleaned up tiles.
  *
  * INSTALLATION
  * =========================================
@@ -29,6 +30,26 @@
  *     To find your MAC Address, login to http://home.nest.com. Click the Protect 
  *     icon. Open the right-hand side bar, open Nest Protect Settings, choose the Nest Protect
  *     you are adding, open Technical Info, copy the value next to 802.15.4 MAC.
+ *
+ *
+ * Copyright (C) 2015 Josh T. Bernstein <josh@joshtb.com>
+ * Permission is hereby granted, free of charge, to any person obtaining a copy of this 
+ * software and associated documentation files (the "Software"), to deal in the Software 
+ * without restriction, including without limitation the rights to use, copy, modify, 
+ * merge, publish, distribute, sublicense, and/or sell copies of the Software, and to 
+ * permit persons to whom the Software is furnished to do so, subject to the following 
+ * conditions: The above copyright notice and this permission notice shall be included 
+ * in all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, 
+ * INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A 
+ * PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT 
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF 
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
+ * OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * Improvments upon code originally developed by Brian Steere, modified by Nick Bailey
+ * and are subject to the following:
  *
  *     
  * Copyright (C) 2014 Nick Bailey <nick@nickhbailey.com>
@@ -71,53 +92,48 @@
 preferences {
     input("username", "text", title: "Username", description: "Your Nest username (usually an email address)")
     input("password", "password", title: "Password", description: "Your Nest password")
-    input("mac", "text", title: "MAC Address", description: "The MAC Address of your Nest Protect")
+    input("mac", "text", title: "802.15.4 MAC", description: "The 802.15.4 MAC of your Nest Protect")
 }
  
  // for the UI
 metadata {
+    definition (name: "Nest Protect", namespace: "dummptyhummpty", author: "Josh Bernstein") {
+      capability "Battery"
+      capability "Smoke Detector"
+      capability "Carbon Monoxide Detector" 
+	  capability "Polling"
+      
+      attribute "Power", "String"
+
+    }
+    
     simulator {
         // TODO: define status and reply messages here
     }
  
     tiles {
 
-        valueTile("smoke", "device.smoke", width: 2, height: 2){
-        	//state ("clear", label: "OK", unit: "Smoke", backgroundColor:"#44B621")
-			//state ("detected", icon:"st.alarm.smoke.smoke", label:"SMOKE", backgroundColor:"#e86d13", unit: "Smoke")
-			//state ("tested", label:"TEST", backgroundColor:"#003CEC", unit: "Smoke")
-            state "smoke", label: 'Smoke ${currentValue}', unit:"smoke",
-            	backgroundColors: [
-                    [value: "clear", color: "#44B621"],
-                    [value: "detected", color: "#e86d13"],
-                    [value: "tested", color: "#003CEC"]
-                ]
+        standardTile("smoke", "device.smoke", width: 2, height: 2){
+        	state ("clear",    label: "Clear", icon:"st.alarm.smoke.clear", backgroundColor:"#79b821")
+			state ("detected", label: "Smoke", icon:"st.alarm.smoke.smoke", backgroundColor:"#ff3333")
 		}
-		valueTile("carbonMonoxide", "device.carbonMonoxide"){
-        	//state("clear", backgroundColor:"#44B621", unit: "CO")
-			//state("detected", label:"CO", icon:"st.alarm.smoke.smoke", backgroundColor:"#e86d13", unit: "CO")
-			//state("tested", label:"TEST", icon:"st.alarm.smoke.test", backgroundColor:"#003CEC", unit: "CO")
-            state("carbonMonoxide", label: 'CO ${currentValue}', unit:"CO", backgroundColors: [
-                    [value: "clear", color: "#44B621"],
-                    [value: "detected", color: "#e86d13"],
-                    [value: "tested", color: "#003CEC"]
-                ]
-            )
+        standardTile("battery", "device.battery"){
+        	state("ok",  label: "Batt. Ok" , icon:"st.switches.switch.on", backgroundColor:"#79b821")
+			state("low", label: "Batt. Low", icon:"st.switches.switch.on", backgroundColor:"#ffa81e")
 		}
-        valueTile("battery", "device.battery"){
-        	//state("OK", backgroundColor:"#44B621", unit: "Batt")
-			//state("Low", label:"Low", backgroundColor:"#e86d13")
-            state("battery", label: 'Battery ${currentValue}', unit:"battery", backgroundColors: [
-                    [value: "OK", color: "#44B621"],
-                    [value: "Low", color: "#e86d13"]
-                ]
-            )
+        standardTile("power", "device.power"){
+        	state ("line",    label: "On AC",      icon:"st.switches.switch.on", backgroundColor:"#79b821")
+			state ("battery", label: "On Batt.", icon:"st.switches.switch.off", backgroundColor:"#ffa81e")
+		}
+ 		standardTile("carbonMonoxide", "device.carbonMonoxide", width: 2, height: 2){
+        	state ("clear",    label: "CO Clear", icon:"st.alarm.carbon-monoxide.clear", backgroundColor:"#79b821")
+			state ("detected", label: "CO",    icon:"st.alarm.carbon-monoxide.carbon-monoxide", backgroundColor:"#ff3333")
 		}
         standardTile("refresh", "device.smoke", inactiveLabel: false, decoration: "flat") {
             state "default", action:"polling.poll", icon:"st.secondary.refresh"
         }
 		main "smoke"
-        details(["smoke", "carbonMonoxide", "battery", "refresh"])
+        details(["smoke", "carbonMonoxide", "battery", "power", "refresh"])
 	}
 }
  
@@ -126,8 +142,6 @@ def parse(String description) {
     
 }
 
- 
- 
 def auto() {
     log.debug "Executing 'auto'"
 }
@@ -136,19 +150,14 @@ def poll() {
     log.debug "Executing 'poll'"
     api('status', []) {
         data.topaz = it.data.topaz.getAt(settings.mac.toUpperCase())
-
         data.topaz.smoke_status = data.topaz.smoke_status == 0? "clear" : "detected"
         data.topaz.co_status = data.topaz.co_status == 0? "clear" : "detected"
-        data.topaz.battery_health_state = data.topaz.battery_health_state  == 0 ? "OK" : "Low"
-             
+        data.topaz.battery_health_state = data.topaz.battery_health_state == 0 ? "ok" : "low"
+        data.topaz.line_power_present = data.topaz.line_power_present == true ? "line" : "battery"
         sendEvent(name: 'smoke', value: data.topaz.smoke_status)
         sendEvent(name: 'carbonMonoxide', value: data.topaz.co_status)
         sendEvent(name: 'battery', value: data.topaz.battery_health_state )
-        log.debug settings.mac
-        log.debug data.topaz.wifi_mac_address
-        log.debug data.topaz.smoke_status
-        log.debug data.topaz.co_status
-        log.debug data.topaz.battery_health_state
+        sendEvent(name: 'power', value: data.topaz.line_power_present)
     }
 }
  
